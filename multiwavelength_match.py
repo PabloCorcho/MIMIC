@@ -11,7 +11,10 @@ import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.wcs import utils
-from scipy.interpolate import interp1d, RegularGridInterpolator
+
+from scipy.interpolate import griddata
+from matplotlib import pyplot as plt
+
 
 class image(object):
     
@@ -75,6 +78,23 @@ class multi_image_match(object):
         self.check_sizes()
         self.reduce_image()
         
+        plt.figure(figsize=(7,7))
+        plt.contour(self.image1.image, origin='lower', colors='k', levels=10,
+                   extent=(self.new_coords[0][0], self.new_coords[1][0], 
+                           self.new_coords[0][1], self.new_coords[1][-1]))
+        plt.imshow(self.image2.image, origin='lower', cmap='flag', alpha=0.4,
+                   extent=(self.coords2[0][0], self.coords2[0][-1], 
+                           self.coords2[1][0], self.coords2[1][-1]))
+        self.new_im2 = self.bin_image(self.image2.image)
+        
+        plt.figure(figsize=(7,7))
+        plt.contour(self.image1.image, origin='lower', colors='k', levels=10,
+                   extent=(self.new_coords[0][0], self.new_coords[1][0], 
+                           self.new_coords[0][1], self.new_coords[1][-1]))
+        plt.imshow(self.new_im2, origin='lower', cmap='flag', alpha=0.4,
+                   extent=(self.new_coords[0][0], self.new_coords[1][0], 
+                           self.new_coords[0][1], self.new_coords[1][-1]))
+        
     def check_sizes(self):
         if self.image1.get_FoV()>self.image2.get_FoV():
             self.big_1 = True
@@ -98,7 +118,12 @@ class multi_image_match(object):
                                                    0).T    
             bounds = np.array(bounds, dtype=int)                                     
             self.image1.image = self.image1.crop(bounds[0], bounds[1])
-            print(bounds)                                   
+            self.new_coords = self.image1.wcs.all_pix2world(bounds.T, 0)
+            
+            print('RA_err={}, DEC_err={} [arcsec]'.format(3600*
+                  (self.coords2[0][[0,-1]]-self.new_coords[:,0]),
+                  3600*(self.coords2[1][[0,-1]]-self.new_coords[:,1])))
+            
         else:
             bounds = self.image2.wcs.all_world2pix(
                     np.array([[self.coords1[0][0],self.coords1[1][0]],
@@ -107,12 +132,28 @@ class multi_image_match(object):
             bounds = np.array(bounds, dtype=int)              
             self.image2.image = self.image2.crop(bounds[0], bounds[1])
             
-        
+    def bin_image(self, image):          
+        if not self.pix_1_smaller:
+            AR, DEC = np.meshgrid(self.coords2[0], self.coords2[1])
+            
+            new_ar = np.linspace(self.new_coords[0][0], self.new_coords[1][0], 
+                                     self.image1.image.shape[1])
+            print(new_ar.shape)
+            new_dec = np.linspace(self.new_coords[0][-1], self.new_coords[1][-1],
+                                     self.image1.image.shape[0])
+            
+            new_AR, new_DEC = np.meshgrid(new_ar, new_dec)
+            
+            new_image = griddata((AR.flatten(),DEC.flatten()), 
+                                 image.flatten(), 
+                                 (new_AR,new_DEC))
+            return new_image
+       
         
         
 if __name__ == '__main__':
-    hdul= fits.open('../data/GALEX/IMAGES/Galex/AIS_83_50083_0001_sv83/AIS_83_sg83-nd-int.fits')        
-    cal_hdul= fits.open('../data/CALIFA/UGC03944.V500.rscube.fits')        
+    hdul= fits.open('test_data/MISDR2_04288_0826-nd-int.fits')        
+    cal_hdul= fits.open('test_data/NGC2543.V500.rscube.fits')        
     
     im1 = image(hdul)
     im2 = image(cal_hdul, IFU=True)
