@@ -12,8 +12,11 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.wcs import utils
 
+from scipy.ndimage import gaussian_filter
+
 from scipy.interpolate import griddata
 from matplotlib import pyplot as plt
+
 
 
 class image(object):
@@ -60,7 +63,8 @@ class image(object):
     def get_FoV(self):
         return self.get_pix_area()*self.get_im_area()
         
-        
+    def gauss_smooth(self, sigma):
+        return gaussian_filter(self.image)
         
         
 class multi_image_match(object):
@@ -71,27 +75,29 @@ class multi_image_match(object):
             self.image2 = image(hdul2, IFU=True)
         else:
             self.image2 = image(hdul2)
-            
+        #---------------------------------------------------------------------    
         self.coords1 = self.image1.get_coords()
         self.coords2 = self.image2.get_coords()
-        
+        #---------------------------------------------------------------------
         self.check_sizes()
+        #---------------------------------------------------------------------
         self.reduce_image()
-        
+        #---------------------------------------------------------------------
         plt.figure(figsize=(7,7))
         plt.contour(self.image1.image, origin='lower', colors='k', levels=10,
                    extent=(self.new_coords[0][0], self.new_coords[1][0], 
                            self.new_coords[0][1], self.new_coords[1][-1]))
-        plt.imshow(self.image2.image, origin='lower', cmap='flag', alpha=0.4,
+        plt.imshow(self.image2.image, origin='lower', cmap='gist_ncar', alpha=0.4,
                    extent=(self.coords2[0][0], self.coords2[0][-1], 
                            self.coords2[1][0], self.coords2[1][-1]))
-        self.new_im2 = self.bin_image(self.image2.image)
-        
+        #---------------------------------------------------------------------
+        self.image2.image = self.bin_image(self.image2.image)
+        #---------------------------------------------------------------------
         plt.figure(figsize=(7,7))
         plt.contour(self.image1.image, origin='lower', colors='k', levels=10,
                    extent=(self.new_coords[0][0], self.new_coords[1][0], 
                            self.new_coords[0][1], self.new_coords[1][-1]))
-        plt.imshow(self.new_im2, origin='lower', cmap='flag', alpha=0.4,
+        plt.imshow(self.image2.image, origin='lower', cmap='gist_ncar', alpha=0.4,
                    extent=(self.new_coords[0][0], self.new_coords[1][0], 
                            self.new_coords[0][1], self.new_coords[1][-1]))
         
@@ -152,7 +158,7 @@ class multi_image_match(object):
         
         
 if __name__ == '__main__':
-    hdul= fits.open('test_data/MISDR2_04288_0826-nd-int.fits')        
+    hdul= fits.open('test_data/Galex/MISDR2_04288_0826_15295/MISDR2_04288_0826-nd-int.fits')        
     cal_hdul= fits.open('test_data/NGC2543.V500.rscube.fits')        
     
     im1 = image(hdul)

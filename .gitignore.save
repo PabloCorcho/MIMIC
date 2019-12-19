@@ -1,0 +1,10 @@
+test_data/*
+rm --cached $FILE
+echo $FILE >> .gitignore
+git add .gitignore
+git commit --amend --no-edit
+git reflog expire --expire=now --all && git gc --prune=now --aggressive
+test_data/*.tar
+test_data/*.gz
+
+
