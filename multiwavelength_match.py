@@ -11,15 +11,19 @@ import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.wcs import utils
+from astropy.nddata.utils import block_reduce
+
+from resize_matrix import resize_matrix
 
 from scipy.ndimage import gaussian_filter
-
 from scipy.interpolate import griddata
+
 from matplotlib import pyplot as plt
+import matplotlib.colors as colors
 
-
-
-class image(object):
+# =============================================================================
+class Image(object):
+# =============================================================================
     
     def __init__(self, hdul, IFU=False):
         self.IFU = IFU
@@ -85,17 +89,19 @@ class image(object):
         
         return frame
         
-class multi_image_match(object):
+# =============================================================================
+class Image_matching(object):
+# =============================================================================
 
     def __init__(self, hdul1, hdul2, IFU_2=False):
         print('--> Initializing IMAGE MATCHING')
-        self.image1 = image(hdul1)
+        self.image1 = Image(hdul1)
         
         if IFU_2:
             print('Image 2 --> IFU mode')
-            self.image2 = image(hdul2, IFU=True)
+            self.image2 = Image(hdul2, IFU=True)
         else:
-            self.image2 = image(hdul2)
+            self.image2 = Image(hdul2)
         
         print('Image 1 with size {}'.format(self.image1.image.shape))
         print('Image 2 with size {}'.format(self.image2.image.shape))
@@ -106,31 +112,10 @@ class multi_image_match(object):
         self.check_sizes()
         #---------------------------------------------------------------------
         self.reduce_image()        
-        #---------------------------------------------------------------------        
-        plt.figure(figsize=(7,7))
-        plt.contour(np.log10(self.image1.image), origin='lower', colors='k',
-                    alpha=1, levels=20,
-                   aspect='auto', vmin=np.percentile(np.log10(self.image1.image),0.5),
-                   extent=(self.new_coords1[0][0], self.new_coords1[1][0], 
-                           self.new_coords1[0][1], self.new_coords1[1][1]))        
-        
-        plt.imshow(np.log10(self.image2.image), origin='lower', cmap='gist_ncar',
-                    aspect='auto', alpha=0.6,
-                   extent=(self.new_coords2[0][0], self.new_coords2[1][0], 
-                           self.new_coords2[0][1], self.new_coords2[1][1]))
-#        plt.xlim(203, 206)
-#        plt.ylim(-32, -31)
         #---------------------------------------------------------------------
-#        self.image2.image = self.bin_image(self.image2.image)
+        self.bin_image()
         #---------------------------------------------------------------------
-#        plt.figure(figsize=(7,7))
-#        plt.contour(self.image1.image, origin='lower', colors='k', levels=10,
-#                   extent=(self.new_coords[0][0], self.new_coords[1][0], 
-#                           self.new_coords[0][1], self.new_coords[1][-1]))
-#        plt.imshow(self.image2.image, origin='lower', cmap='gist_ncar', alpha=0.4,
-#                   extent=(self.new_coords[0][0], self.new_coords[1][0], 
-#                           self.new_coords[0][1], self.new_coords[1][-1]))
-        
+      
     def check_sizes(self, show=True):
         """
         This method selects the common area between both images. 
@@ -151,8 +136,7 @@ class multi_image_match(object):
         print('Image 1 common pixels size: ({:}, {:})'.format(comRApix.size,
                                                               comDECpix.size))
         
-        # Corner coordinates
-        
+        # Corner coordinates        
         minRA = np.min(self.coords1[0][comRApix])
         maxRA = np.max(self.coords1[0][comRApix])
         minDEC = np.min(self.coords1[1][comDECpix])
@@ -169,18 +153,22 @@ class multi_image_match(object):
             ax.annotate('Image 1', xy=(minRA,maxDEC), color='r')
             ax.plot()        
             plt.show()
-    
-    
+        
         self.boundRA = np.array([minRA, maxRA])
         self.boundDEC = np.array([minDEC, maxDEC])        
         self.bounds1 = np.array([[comRApix[0], comRApix[-1]], 
                                  [comDECpix[0], comDECpix[-1]]])
-        
+    
+        if self.image1.get_pix_area() < self.image2.get_pix_area():
+            print('Image 1 have smaller pixels than 2. \n')
+            self.pix_1_smaller = True        
+        else:
+            print('Image 2 have smaller pixels than 1. \n')
+            self.pix_1_smaller = False            
+            
     def reduce_image(self):
             
-        # Image 1                
-#        bounds = self.image1.wcs.all_world2pix(
-#                self.boundRA, self.boundDEC, 0)            
+        # Image 1                  
         bounds =self.bounds1
         bounds = np.sort(np.array(bounds, dtype=int))              
                 
@@ -190,40 +178,62 @@ class multi_image_match(object):
         # Image 2        
         bounds = self.image2.wcs.all_world2pix(
                     self.boundRA, self.boundDEC, 0)            
-        
-        print(bounds)
         bounds = np.sort(np.array(bounds, dtype=int))             
-        print(bounds)
+        
         self.image2.image = self.image2.crop(bounds[0], bounds[1])        
         self.new_coords2 = self.image2.wcs.all_pix2world(bounds.T, 0)
         
-        print('Image 2 cropped with errors at edges:\n  RA_err={}, DEC_err={} [arcsec]'.format(3600*
+        print('Image 1 reduced to a frame extending from:\n {:.7} to {:.7} RA, {:.6} to {:.7} DEC \n'.format(
+                self.new_coords1[0,0], self.new_coords1[1,0], 
+                self.new_coords1[0,1], self.new_coords1[1,1]))
+        print('Image 2 reduced to a frame extending from:\n {:.7} to {:.7} RA, {:.6} to {:.7} DEC \n'.format(
+                self.new_coords2[0,0], self.new_coords2[1,0], 
+                self.new_coords2[0,1], self.new_coords2[1,1]))
+        
+        print('Image 1 and 2 cropped with errors at edges:\n  RA_err={:.6}, DEC_err={:.6} [arcsec] \n'.format(3600*
               (self.new_coords1[0,0]-self.new_coords2[0,0]),
               3600*(self.new_coords1[1,1]-self.new_coords2[1,1]))
               )
         
-        print(self.new_coords2)
-        print(self.new_coords1)
+        
             
-    def bin_image(self, image):          
+    def bin_image(self):          
         if not self.pix_1_smaller:
-            AR, DEC = np.meshgrid(self.coords2[0], self.coords2[1])
+            print('--> Binning Image 2 from shape {} to {}\n'.format(self.image2.image.shape,
+                                                                     self.image1.image.shape))            
+            print(self.image2.image.shape[0]/self.image1.image.shape[0])
+            print(self.image2.image.shape[1]/self.image1.image.shape[1])
+
+            new_image = resize_matrix(self.image2.image, 
+                      (self.image1.image.shape[0],
+                       self.image1.image.shape[1]))
+            print(new_image.shape)
+            print(self.image1.image.shape)
+            print(np.nansum(self.image2.image), np.nansum(new_image))
+            self.image2.image = new_image
+        else:                        
+            print('--> Binning Image 1 from shape {} to {}\n'.format(self.image1.image.shape,
+                                                                     self.image2.image.shape))
+            print(self.image2.image.shape[0]/self.image1.image.shape[0])
+            print(self.image2.image.shape[1]/self.image1.image.shape[1])
+
+            new_image = resize_matrix(self.image1.image, 
+                      (self.image2.image.shape[0],
+                       self.image2.image.shape[1]))
+            print(new_image.shape)
+            print(self.image1.image.shape)
+            print(np.nansum(self.image2.image), np.nansum(new_image))
+            self.image1.image = new_image
             
-            new_ar = np.linspace(self.new_coords[0][0], self.new_coords[1][0], 
-                                     self.image1.image.shape[1])
-            print(new_ar.shape)
-            new_dec = np.linspace(self.new_coords[0][-1], self.new_coords[1][-1],
-                                     self.image1.image.shape[0])
-            
-            new_AR, new_DEC = np.meshgrid(new_ar, new_dec)
-            
-            new_image = griddata((AR.flatten(),DEC.flatten()), 
-                                 image.flatten(), 
-                                 (new_AR,new_DEC))
-            return new_image
        
         
-        
+# =============================================================================
+def make_cube():        
+# =============================================================================
+    pass
+    
+    
+    
 if __name__ == '__main__':
 #    hdul= fits.open('/home/pablo/obs_data/test_data/Galex/MISDR2_04288_0826_15295/MISDR2_04288_0826-nd-int.fits')        
 #    cal_hdul= fits.open('/home/pablo/obs_data/test_data/NGC2543.V500.rscube.fits')        
@@ -240,20 +250,18 @@ if __name__ == '__main__':
 #    multi_match = multi_image_match(hdul[0], cal_hdul[0], IFU_2=True)
     
 #    hdul2= fits.open('/home/pablo/obs_data/HiKids/NGC5253/eHst1968221/HST/hst_13364_59_wfc3_uvis_f275w/hst_13364_59_wfc3_uvis_f275w_drz.fits')        
-    hdul2= fits.open('/home/pablo/obs_data/HiKids/NGC5253/eHst1968191/HST/hst_12206_03_wfc3_ir_total/hst_12206_03_wfc3_ir_total_drz.fits')        
-    hdul1= fits.open('/home/pablo/obs_data/HiKids/NGC5253/Galex/GI4_095049_NGC5253_24189/GI4_095049_NGC5253-nd-int.fits')        
-#    hdul1= fits.open('/home/pablo/obs_data/HiKids/NGC5253/VISTA/938_968_48_3461_1.fits')        
+#    hdul1= fits.open('/home/pablo/obs_data/HiKids/NGC5253/eHst1968191/HST/hst_12206_03_wfc3_ir_total/hst_12206_03_wfc3_ir_total_drz.fits')        
+#    hdul2 = fits.open('/home/pablo/obs_data/HiKids/NGC5253/Herschel/anonymous1584533892/1342249929/level3/HPPJSMAPR/hpacs_30HPPJSMAPR_1340_m3138_00_v1.0_1472601885652.fits')
+    hdul2= fits.open('/home/pablo/obs_data/HiKids/NGC5253/Galex/GI4_095049_NGC5253_24189/GI4_095049_NGC5253-nd-int.fits')        
+    hdul1= fits.open('/home/pablo/obs_data/HiKids/NGC5253/VISTA/938_968_48_3461_1.fits')        
+#    hdul1= fits.open('/home/pablo/obs_data/HiKids/NGC5253/VISTA/938_968_48_3461_3.fits')        
+#    hdul2 = fits.open('/home/pablo/obs_data/HiKids/NGC5253/XMM-Newton/0035940301/pps/P0035940301M1S001IMAGE_8000.fits')
     
-    im1 = image(hdul1[0])
-    im2 = image(hdul2[1])
+    im1 = Image(hdul1[1])
+    im2 = Image(hdul2[0])
     
-    fig = plt.figure(figsize=(10,10))
-    ax = fig.add_subplot(111)
-    ax.add_patch(im1.plotframe(color='r'))
-    ax.add_patch(im2.plotframe(color='b'))
-    ax.plot()
-    plt.show()
+
     
-    multi_match = multi_image_match(hdul1[0], hdul2[1])
+    multi_match = Image_matching(hdul2[0], hdul1[1])
     
     
